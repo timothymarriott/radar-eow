@@ -49,7 +49,7 @@ app.get('/obj/:objid', (req, res) => {
   const result = parseResult(stmt.get({
     objid: parseInt(req.params.objid, 0),
   }));
-  if (!result.map_type)
+  if (!result.map_name)
     return res.status(404).json({});
   res.json(result);
 });
