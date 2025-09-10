@@ -5,11 +5,15 @@ import path from 'path';
 import responseTime from 'response-time';
 import sqlite3 from 'better-sqlite3';
 import * as util from './util';
+import * as fs from 'fs';
+import { Stream } from 'stream';
+
 
 const db = sqlite3(path.join(util.APP_ROOT, 'map.db'), {
   // @ts-ignore
   // verbose: console.log,
 });
+
 const app = express();
 
 app.use(cors());
@@ -27,7 +31,6 @@ function getQueryParamStr(req: express.Request, name: string) {
 }
 
 function parseResult(result: any): { [key: string]: any } {
-  console.log(result)
   if (!result)
     return {};
 
@@ -100,7 +103,6 @@ function handleReqObjs(req: express.Request, res: express.Response) {
   }
 
   const getData = (x: any) => {
-    console.log(x)
     return x;
   };
 
@@ -120,6 +122,64 @@ function handleReqObjs(req: express.Request, res: express.Response) {
 }
 
 app.get('/objs/:map', handleReqObjs);
+
+const ALLOWED_REGION_TABLES = [7, 12, 16, 18].map(n => "region" + n.toString().padStart(2, "0"));
+function handleReqRegions(req: express.Request, res: express.Response) {
+  const region = req.params.region;
+  const level = req.params.level;
+  console.log(level)
+
+  if (!ALLOWED_REGION_TABLES.includes(region)) {
+    return res.status(400).json({ error: 'Invalid table name' });
+  }
+
+  const stmt = db.prepare(`
+    SELECT * FROM ${region} WHERE map_name = @map_name
+  `);
+
+  const rows = stmt.all({ map_name: level }).map(row => {
+    if (row.data) {
+      try {
+        row.data = JSON.parse(row.data);
+      } catch (e) {
+        row.data = {};
+      }
+    }
+    return row;
+  });
+
+  res.json(rows);
+}
+
+app.get('/region/:level/:region', handleReqRegions)
+
+app.get('/icon/:objid', (req, res) => {
+  const stmt = db.prepare(`SELECT ${FIELDS} FROM objs
+    WHERE objid = @objid LIMIT 1`);
+  const result = parseResult(stmt.get({
+    objid: parseInt(req.params.objid, 0),
+  }));
+  if (!result.map_name)
+    return res.status(404).json({});
+
+
+  let path = "content/images/" + result.actor + ".png";
+
+  if (!fs.existsSync(path)) {
+    return res.status(404).json({});
+  }
+  const r = fs.createReadStream(path) // or any other way to get a readable stream
+  const ps = new Stream.PassThrough() // <---- this makes a trick with stream error handling
+  Stream.pipeline(
+   r,
+   ps,
+   (err) => {
+    if (err) {
+      return res.sendStatus(404);
+    }
+  })
+  ps.pipe(res)
+})
 
 
 app.listen(3007);

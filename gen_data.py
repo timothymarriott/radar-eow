@@ -1,10 +1,13 @@
 import sqlite3
 import json
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 from pathlib import Path
 from os import listdir
 from os.path import isfile, join
 import tqdm
+import os
+import create_database
+import time
 
 def load_db(path: str) -> sqlite3.Connection:
     """
@@ -85,51 +88,110 @@ def save_db(conn: sqlite3.Connection, path: str) -> None:
         conn.backup(dest)
     dest.close()
 
-
+def add_region(
+    conn: sqlite3.Connection,
+    table: str,
+    map_name: str,
+    region_id: int,
+    name: str,
+    points: List[Dict[str, float]],
+) -> int:
+    """
+    Insert a region into a region table (e.g., region12).
+    Data is stored as a JSON array of [x, y] pairs.
+    """
+    cursor = conn.cursor()
+    coords = [[p["X"], p["Y"]] for p in points]
+    cursor.execute(
+        f"""
+        INSERT INTO {table} (id, map_name, name, data)
+        VALUES (?, ?, ?, ?)
+        """,
+        (region_id, map_name, name, json.dumps(coords)),
+    )
+    conn.commit()
+    return cursor.lastrowid
 
 
 def gen_level(db: sqlite3.Connection, name: str):
-
-
     data = json.load(open(f"content/map/{name}.json", "r"))
 
-    actors = data['actors']
+    # Insert actor objects if present
+    if "actors" in data:
+        actors = data["actors"]
+        print(f"Generating objs for {name} from {len(actors)} actors")
+        for actor in tqdm.tqdm(actors):
+            add_item(
+                db,
+                name,
+                actor[18],
+                actor[18],
+                {"x": actor[0][0], "y": actor[0][1], "z": actor[0][2]},
+                {
+                    "min_x": actor[6],
+                    "min_y": actor[7],
+                    "min_z": actor[8],
+                    "max_x": actor[9],
+                    "max_y": actor[10],
+                    "max_z": actor[11],
+                },
+                actor[13],
+                actor[12],
+                actor[14],
+                hex(actor[14]),
+                {},
+                0,
+                0,
+                {},
+            )
 
-    print(f"Generating data for {name} from {len(actors)} actors")
+    # Insert regions into region12
 
-    for actor in tqdm.tqdm(actors):
-        add_item(db, name, actor[18], actor[18], {
-            "x": actor[0][0],
-            "y": actor[0][1],
-            "z": actor[0][2]}, {
-                "min_x": actor[6],
-                "min_y": actor[7],
-                "min_z": actor[8],
-                "max_x": actor[9],
-                "max_y": actor[10],
-                "max_z": actor[11],
-            }, actor[13], actor[12], actor[14], hex(actor[14]), {}, 0, 0, {})
 
-    print(f"Generated {name}")
+def create_region(name: str):
+    levelData = json.load(open(f"E:\\Development\\Modding\\NFormats\\data\\export\\sections\\{name}.json", "r"))
+    for lvl in tqdm.tqdm(levelData["levels"]):
+        map_name = lvl["level"]  # <-- use level key as map_name
+        regions = lvl.get("regions", [])
+        for i, region in enumerate(regions):
+            coords = [[pt["X"], pt["Y"]] for pt in region.get("Points", [])]
+            add_region(
+                db,
+                name,          # fixed table
+                map_name,            # map_name = level name
+                i,                   # id field
+                region["name"],      # name column
+                region["Points"],    # original points
+                )
 
 # Example usage:
 if __name__ == "__main__":
     print("Connecting...")
+
+    if os.path.exists("map.db"):
+        create_database.create_database()
+        time.sleep(0.5)
+
     db = load_db("map.db")
     print("Connected")
 
-    clear_table(db)
+
 
     SEARCHDIR = "content/map"
 
     onlyfiles = [f for f in listdir(SEARCHDIR) if isfile(join(SEARCHDIR, f))]
+
+
+    clear_table(db)
 
     for f in onlyfiles:
         name = f.replace(".json", "")
 
         gen_level(db, name)
 
-    print("Saving...")
-    save_db(db, "out.db")
-    print("Saved")
+    create_region("region12")
+    create_region("region16")
+    create_region("region18")
+
+    print("Complete")
     db.close()
